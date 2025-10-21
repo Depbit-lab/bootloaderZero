@@ -20,7 +20,6 @@
 #include <stdio.h>
 #include <sam.h>
 #include "sam_ba_monitor.h"
-#include "sam_ba_serial.h"
 #include "board_definitions.h"
 #include "board_driver_led.h"
 #include "board_driver_i2c.h"
@@ -175,9 +174,7 @@ static void check_start_application(void)
  */
 int main(void)
 {
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
   P_USB_CDC pCdc;
-#endif
   DEBUG_PIN_HIGH;
 
   /* Jump in application if condition is satisfied */
@@ -215,14 +212,7 @@ int main(void)
   }
 #endif
 
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-  /* UART is enabled in all cases */
-  serial_open();
-#endif
-
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
   pCdc = usb_init();
-#endif
 
   DEBUG_PIN_LOW;
 
@@ -239,7 +229,6 @@ int main(void)
   /* Wait for a complete enum on usb or a '#' char on serial line */
   while (1)
   {
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
     if (pCdc->IsConfigured(pCdc) != 0)
     {
       main_b_cdc_enable = true;
@@ -255,20 +244,6 @@ int main(void)
         sam_ba_monitor_run();
       }
     }
-#endif
-
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-    /* Check if a '#' has been received */
-    if (!main_b_cdc_enable && serial_sharp_received())
-    {
-      sam_ba_monitor_init(SAM_BA_INTERFACE_USART);
-      /* SAM-BA on Serial loop */
-      while(1)
-      {
-        sam_ba_monitor_run();
-      }
-    }
-#endif
   }
 }
 

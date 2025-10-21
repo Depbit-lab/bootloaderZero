@@ -26,8 +26,6 @@
 #include <string.h>
 
 #include "sam_ba_monitor.h"
-#include "sam_ba_serial.h"
-#include "board_driver_serial.h"
 #include "board_driver_usb.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
@@ -52,21 +50,6 @@ typedef struct
   uint32_t (*getdata_xmd)(void* data, uint32_t length);
 } t_monitor_if;
 
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-/* Initialize structures with function pointers from supported interfaces */
-static const t_monitor_if uart_if =
-{
-  .put_c =       serial_putc,
-  .get_c =       serial_getc,
-  .is_rx_ready = serial_is_rx_ready,
-  .putdata =     serial_putdata,
-  .getdata =     serial_getdata,
-  .putdata_xmd = serial_putdata_xmd,
-  .getdata_xmd = serial_getdata_xmd
-};
-#endif
-
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
 /* USB doesn't use Xmodem protocol, since USB already includes flow control */
 static const t_monitor_if usbcdc_if =
 {
@@ -78,7 +61,6 @@ static const t_monitor_if usbcdc_if =
   .putdata_xmd =   cdc_write_buf,
   .getdata_xmd =   cdc_read_buf_xmd
 };
-#endif
 
 /* The pointer to the interface object used by the monitor */
 static t_monitor_if * ptr_monitor_if = NULL;
@@ -538,18 +520,8 @@ static void protocol_receive_write_data(void)
 
 void sam_ba_monitor_init(uint8_t com_interface)
 {
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-  if (com_interface == SAM_BA_INTERFACE_USART)
-  {
-    ptr_monitor_if = (t_monitor_if*) &uart_if;
-  }
-#endif
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-  if (com_interface == SAM_BA_INTERFACE_USBCDC)
-  {
-    ptr_monitor_if = (t_monitor_if*) &usbcdc_if;
-  }
-#endif
+  (void)com_interface;
+  ptr_monitor_if = (t_monitor_if*) &usbcdc_if;
 }
 
 void sam_ba_putdata_term(uint8_t* data, uint32_t length)
