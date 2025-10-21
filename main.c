@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include <string.h>
 #include <sam.h>
 #include "sam_ba_monitor.h"
 #include "board_definitions.h"
@@ -26,6 +27,13 @@
 #include "board_driver_jtag.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
+#include "zk_fw_footer.h"
+#include "zk_secret.h"
+#include "zk_blake2s_mac.h"
+
+#define SRAM_START 0x20000000u
+#define SRAM_END   0x20008000u
+#define PENALTY_DELAY_MS 15000u
 
 extern uint32_t __sketch_vectors_ptr; // Exported value from linker script
 extern void board_init(void);
@@ -49,6 +57,164 @@ static volatile bool main_b_cdc_enable = false;
 #ifdef CONFIGURE_PMIC
 static volatile bool jump_to_app = false;
 #endif
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len)
+{
+  for (size_t i = 0; i < len; i++)
+  {
+    crc ^= data[i];
+    for (uint32_t j = 0; j < 8u; j++)
+    {
+      uint32_t mask = -(crc & 1u);
+      crc = (crc >> 1u) ^ (0xEDB88320u & mask);
+    }
+  }
+  return crc;
+}
+
+static uint32_t dsu_crc32_aligned(uint32_t seed, const void *data, size_t len)
+{
+  if (len == 0u)
+  {
+    return seed;
+  }
+
+  PM->AHBMASK.reg |= PM_AHBMASK_DSU;
+  PM->APBBMASK.reg |= PM_APBBMASK_DSU;
+
+  DSU->STATUSA.reg = DSU_STATUSA_DONE | DSU_STATUSA_BERR;
+  DSU->ADDR.reg = (uint32_t)data;
+  DSU->LENGTH.reg = (uint32_t)len;
+  DSU->DATA.reg = seed;
+  DSU->CTRL.reg = DSU_CTRL_CRC;
+
+  while ((DSU->STATUSA.reg & DSU_STATUSA_DONE) == 0u)
+  {
+    /* Wait for completion */
+  }
+
+  return DSU->DATA.reg;
+}
+
+static uint32_t crc32_region_hw_sw(uint32_t start_addr, uint32_t len)
+{
+  uint32_t crc = 0xFFFFFFFFu;
+  uint32_t aligned_len = len & ~0x3u;
+
+  if (aligned_len > 0u)
+  {
+    crc = dsu_crc32_aligned(crc, (const void *)start_addr, aligned_len);
+  }
+
+  uint32_t remaining = len - aligned_len;
+  if (remaining > 0u)
+  {
+    crc = crc32_update(crc, (const uint8_t *)(start_addr + aligned_len), remaining);
+  }
+
+  return crc ^ 0xFFFFFFFFu;
+}
+
+static bool application_vector_table_valid(void)
+{
+  uint32_t *vectors = (uint32_t *)&__sketch_vectors_ptr;
+  uint32_t initial_sp = vectors[0];
+  uint32_t reset_handler = vectors[1];
+
+  if ((initial_sp < SRAM_START) || (initial_sp > SRAM_END))
+  {
+    return false;
+  }
+
+  if ((reset_handler < APPLICATION_START_ADDRESS) || (reset_handler >= FW_FOOTER_ADDRESS))
+  {
+    return false;
+  }
+
+  if ((reset_handler & 0x1u) == 0u)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+static bool app_footer_valid_and_authenticated(void)
+{
+  fw_footer_t footer;
+  memcpy(&footer, (const void *)FW_FOOTER_ADDRESS, FW_FOOTER_SIZE);
+
+  if (footer.magic != FW_FOOTER_MAGIC)
+  {
+    return false;
+  }
+
+  if ((footer.app_length == 0u) || (footer.app_length > (FW_FOOTER_ADDRESS - APPLICATION_START_ADDRESS)))
+  {
+    return false;
+  }
+
+  if ((APPLICATION_START_ADDRESS + footer.app_length) > FW_FOOTER_ADDRESS)
+  {
+    return false;
+  }
+
+  uint32_t calculated_crc = crc32_region_hw_sw(APPLICATION_START_ADDRESS, footer.app_length);
+  if (calculated_crc != footer.crc32)
+  {
+    return false;
+  }
+
+  uint8_t calculated_mac[BLAKE2S_MAC_LEN];
+  blake2s_mac(
+    calculated_mac,
+    (const void *)APPLICATION_START_ADDRESS,
+    footer.app_length,
+    ZK_SECRET_KEY,
+    ZK_SECRET_KEY_LEN);
+
+  if (memcmp(calculated_mac, footer.mac_tag, BLAKE2S_MAC_LEN) != 0)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+static void delay_ms(uint32_t ms)
+{
+  if (ms == 0u)
+  {
+    return;
+  }
+
+  uint32_t ticks_per_ms = SystemCoreClock / 1000u;
+  if (ticks_per_ms == 0u)
+  {
+    ticks_per_ms = 1u;
+  }
+
+  if (ticks_per_ms > (SysTick_LOAD_RELOAD_Msk + 1u))
+  {
+    ticks_per_ms = SysTick_LOAD_RELOAD_Msk + 1u;
+  }
+
+  SysTick->CTRL = 0u;
+  SysTick->LOAD = ticks_per_ms - 1u;
+  SysTick->VAL = 0u;
+  SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk | SysTick_CTRL_ENABLE_Msk;
+
+  while (ms-- > 0u)
+  {
+    while ((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) == 0u)
+    {
+      __NOP();
+    }
+  }
+
+  SysTick->CTRL = 0u;
+  SysTick->VAL = 0u;
+}
 
 /**
  * \brief Check the application startup condition
@@ -83,6 +249,11 @@ static void check_start_application(void)
   if ( ((uint32_t)(&__sketch_vectors_ptr) & ~SCB_VTOR_TBLOFF_Msk) != 0x00)
   {
     /* Stay in bootloader */
+    return;
+  }
+
+  if (!application_vector_table_valid())
+  {
     return;
   }
 
@@ -147,6 +318,12 @@ static void check_start_application(void)
   }
 #endif
 */
+
+  if (!app_footer_valid_and_authenticated())
+  {
+    delay_ms(PENALTY_DELAY_MS);
+    return;
+  }
 
 #ifdef CONFIGURE_PMIC
   jump_to_app = true;
