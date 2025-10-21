@@ -21,7 +21,6 @@
 #include <sam.h>
 #include "sam_ba_monitor.h"
 #include "board_definitions.h"
-#include "board_driver_led.h"
 #include "board_driver_i2c.h"
 #include "board_driver_pmic.h"
 #include "board_driver_jtag.h"
@@ -57,8 +56,6 @@ static volatile bool jump_to_app = false;
  */
 static void check_start_application(void)
 {
-//  LED_init();
-//  LED_off();
 
   /*
    * Test sketch stack pointer @ &__sketch_vectors_ptr
@@ -151,7 +148,6 @@ static void check_start_application(void)
 #endif
 */
 
-//  LED_on();
 #ifdef CONFIGURE_PMIC
   jump_to_app = true;
 #else
@@ -216,13 +212,6 @@ int main(void)
 
   DEBUG_PIN_LOW;
 
-  /* Initialize LEDs */
-  LED_init();
-  LEDRX_init();
-  LEDRX_off();
-  LEDTX_init();
-  LEDTX_off();
-
   /* Start the sys tick (1 ms) */
   SysTick_Config(1000);
 
@@ -249,7 +238,5 @@ int main(void)
 
 void SysTick_Handler(void)
 {
-  LED_pulse();
-
   sam_ba_monitor_sys_tick();
 }
