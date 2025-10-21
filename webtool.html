@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZeroKeyUSB — WebTool</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root{ --zk: #6CD75F; }
+    body { background: #ffffff; color: #0f172a; }
+    .navbar { background: #ffffff !important; border-bottom: 1px solid #e5e7eb; }
+    .brand { color: #111827; font-weight: 800; letter-spacing:.2px; }
+    .chip { font-size:.8rem; padding:.2rem .6rem; border-radius:999px; background:#f3f4f6; border:1px solid #e5e7eb; color:#111827; }
+    .card{ background:#ffffff; border:1px solid #e5e7eb; }
+    .form-control, .form-select, .btn { border-radius: 999px; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .log { background:#f9fafb; color:#111827; border-radius:12px; padding:10px; height:140px; overflow:auto; font-size:.9rem; border:1px solid #e5e7eb; }
+    .nav-pills .nav-link.active{ background: var(--zk); color:#0b1220; }
+    a, .nav-link{ color:#2563eb; }
+    table input, table textarea{ border-radius: 10px !important; }
+    .small-muted{ color:#6b7280; font-size:.9rem; }
+    .btn-outline-zk{ border-color: var(--zk); color: var(--zk); }
+    .btn-outline-zk:hover{ background: var(--zk); color:#0b1220; }
+    .section-title{ display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem }
+    .section-title .chip{ border-color:#e5e7eb }
+    .table thead th { background:#f9fafb; }
+    .table.table-striped tbody tr:nth-of-type(odd){ background:#ffffff; }
+    .table.table-striped tbody tr:nth-of-type(even){ background:#f9fafb; }
+    .btn-outline-light { border-color:#e5e7eb; color:#111827; background:#ffffff; }
+    .btn-outline-light:hover{ background:#f3f4f6; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg">
+  <div class="container-fluid">
+    <span class="navbar-brand brand">ZeroKeyUSB</span>
+    <div class="ms-auto d-flex align-items-center gap-2">
+      <span class="chip mono" id="deviceState">⏹ Disconnected</span>
+      <span class="chip mono" id="timeState">⏱ Time: auto</span>
+      <button class="btn btn-success btn-sm" id="btnConnect">🔌 Connect</button>
+      <button class="btn btn-outline-light btn-sm" id="btnDisconnect" disabled>Disconnect</button>
+    </div>
+  </div>
+</nav>
+
+<main class="container py-4">
+  <ul class="nav nav-pills" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tab-credentials" type="button">Credentials</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-firmware" type="button">Firmware</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-logs" type="button">Logs</button></li>
+  </ul>
+
+  <div class="tab-content">
+    <div class="tab-pane fade show active" id="tab-credentials">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0">Credential Manager</h5>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-light" id="btnReqRead" disabled>📥 Import from device</button>
+              <button class="btn btn-warning text-dark" id="btnReqSave" disabled>💾 Save to device</button>
+              <button class="btn btn-outline-light" id="btnCsvLoad" disabled>CSV → Table</button>
+              <button class="btn btn-outline-light" id="btnCsvSave" disabled>Table → CSV</button>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-striped align-middle mb-2" id="credTable">
+              <thead>
+                <tr>
+                  <th style="width:6%">#</th>
+                  <th style="width:19%">Site</th>
+                  <th style="width:19%">User</th>
+                  <th style="width:19%">Password</th>
+                  <th style="width:27%">TOTP (Base32 or otpauth://)</th>
+                  <th style="width:10%">Actions</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <input type="file" id="csvInput" accept=".csv" hidden />
+          <div class="small-muted">Limits: 16 characters for Site/User/Password. The table enforces it automatically.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="section-title">
+            <h6 class="mb-0">Encrypted Backups (local / optional Drive)</h6>
+            <span class="chip">AES-256-GCM</span><span class="chip">PBKDF2-SHA256</span>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 col-lg-6">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h6>Save backup (local)</h6>
+                  <div class="mb-2">
+                    <input type="password" class="form-control" id="bkPassSave" placeholder="Passphrase to encrypt">
+                  </div>
+                  <button class="btn btn-outline-zk" id="btnBackupLocal" disabled>⬇️ Download .zkb</button>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-6">
+              <div class="card h-100">
+                <div class="card-body">
+                  <h6>Restore backup (local)</h6>
+                  <div class="mb-2">
+                    <input type="password" class="form-control" id="bkPassLoad" placeholder="Passphrase to decrypt">
+                  </div>
+                  <div class="d-flex gap-2">
+                    <input type="file" id="bkFileInput" accept=".zkb,application/json" class="form-control">
+                    <button class="btn btn-outline-light" id="btnRestoreLocal" disabled>⬆️ Restore to table</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-top pt-3 mt-2">
+            <details>
+              <summary class="small-muted">Google Drive (optional) — sign in to enable</summary>
+              <div class="mt-2 d-flex flex-wrap gap-2">
+                <button class="btn btn-outline-light" id="btnDriveLogin">Sign in with Google</button>
+                <button class="btn btn-outline-light" id="btnDriveBackup" disabled>Upload encrypted backup</button>
+                <button class="btn btn-outline-light" id="btnDriveRestore" disabled>Restore from Drive</button>
+              </div>
+              <div class="small-muted mt-2">Suggested scope: <code>drive.file</code>. Files saved as <code>application/x-zerokeyusb+backup</code>.</div>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="tab-firmware">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="mb-0">Firmware Updater</h5>
+            <span class="chip mono" id="bootState">—</span>
+          </div>
+
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-12 col-md-6">
+              <label class="form-label">Select image</label>
+              <select id="fwSelect" class="form-select">
+                <option value="default">Default (recommended)</option>
+                <option value="stable">ZeroKeyUSB v1.0.0 (stable)</option>
+                <option value="beta">ZeroKeyUSB v1.1.0-beta</option>
+                <option value="custom">— Load custom file…</option>
+              </select>
+              <input type="file" id="fwFileHidden" accept=".bin,.hex,.uf2" hidden />
+              <div class="small-muted mt-1" id="fwInfo">Pick an option to prepare flashing.</div>
+            </div>
+            <div class="col-12 col-md-3 d-grid">
+              <button class="btn btn-success" id="btnFlash" disabled>⚡ Flash</button>
+            </div>
+            <div class="col-12 col-md-3">
+              <div class="progress" role="progressbar"><div id="fwBar" class="progress-bar" style="width:0%">0%</div></div>
+              <div class="d-flex justify-content-between small-muted mt-1">
+                <span id="fwSize">—</span><span id="fwSpeed">—</span>
+              </div>
+            </div>
+          </div>
+
+          <pre id="fwLog" class="log mono"></pre>
+          <div class="small-muted">Protocol: <code>HELLO</code>, <code>ERASE APP</code>, <code>WRITE addr len crc32</code>, <code>DONE</code>. Use Bootloader (↩️ 1200 baud).</div>
+          <div class="mt-2">
+            <button class="btn btn-secondary" id="btnEnterBoot" disabled>↩️ Enter Bootloader</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="tab-logs">
+      <div class="row g-3">
+        <div class="col-12 col-lg-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6>Serial</h6>
+              <pre id="serialLog" class="log mono"></pre>
+            </div>
+          </div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <h6>Events</h6>
+              <pre id="timeLog" class="log"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ===== State =====
+const STANDARD_BAUD_RATE = 115200;
+let port=null, writer=null, lineReader=null;
+let isBoot=false;
+let selectedFw=null; // Uint8Array
+let selectedFwName='—';
+let readingRecords=false, recordsToRead=0, recordsReadCounter=0;
+let lastEpochSent=null;
+let isSignedInToDrive=false;
+let pendingSaveRows=null;
+let awaitingDeviceSaveAuthorization=false;
+
+const el = (id)=>document.getElementById(id);
+const serialLog = el('serialLog');
+const timeLog = el('timeLog');
+
+function log(where, msg){ const ts=new Date().toLocaleTimeString(); where.textContent += '['+ts+'] '+msg+'\n'; where.scrollTop = where.scrollHeight; }
+function setDevState(txt){ el('deviceState').textContent = txt; }
+function setBootState(txt){ el('bootState').textContent = txt; }
+function epochUTC(){ return Math.floor(Date.now()/1000); }
+function setTimeState(txt){ el('timeState').textContent = txt; }
+
+function updateDriveButtons(){
+    el('btnDriveBackup').disabled = !isSignedInToDrive || !port;
+    el('btnDriveRestore').disabled = !isSignedInToDrive || !port;
+    if(isSignedInToDrive) {
+        el('btnDriveLogin').textContent = 'Sign out of Google';
+    } else {
+        el('btnDriveLogin').textContent = 'Sign in with Google';
+    }
+}
+
+// ===== Web Serial line transformer =====
+class LineBreakTransformer {
+  constructor(){ this.chunks=''; }
+  transform(chunk, controller){ this.chunks += chunk; const lines=this.chunks.split('\n'); this.chunks=lines.pop(); lines.forEach(l=>controller.enqueue(l)); }
+  flush(controller){ if(this.chunks) controller.enqueue(this.chunks); }
+}
+
+// ===== Connection =====
+async function setupSerialStreams(){
+  const textDecoder = new TextDecoderStream();
+  const transformStream = new TransformStream(new LineBreakTransformer());
+  lineReader = port.readable
+    .pipeThrough(textDecoder)
+    .pipeThrough(transformStream)
+    .getReader();
+  writer = port.writable.getWriter();
+  startContinuousRead();
+}
+
+async function connectPort(){
+  if (!('serial' in navigator)){ alert('Your browser does not support Web Serial. Use Chrome/Edge.'); return; }
+  try{
+    port = await navigator.serial.requestPort({});
+    await port.open({ baudRate: STANDARD_BAUD_RATE });
+    await setupSerialStreams();
+
+    setDevState('🟢 Connected');
+    el('btnDisconnect').disabled = false;
+    el('btnEnterBoot').disabled = false;
+    lastEpochSent=null;
+    setTimeState('⏱ Time: auto');
+
+    ['btnReqRead','btnReqSave','btnCsvLoad','btnCsvSave','btnBackupLocal','btnRestoreLocal'].forEach(id=> el(id).disabled=false);
+    updateDriveButtons();
+
+    updateFlashButton();
+
+    readingRecords=false;
+    recordsReadCounter=0;
+    recordsToRead=0;
+
+    log(serialLog, 'Connected. Ready to interact with the device.');
+  }catch(e){ log(serialLog,'Connection error: '+e.message); }
+}
+
+async function disconnectPort(){
+  try{ if(lineReader) await lineReader.cancel(); }catch(_){ }
+  try{
+    if(writer){
+      if (typeof writer.close === 'function') await writer.close();
+      if (typeof writer.releaseLock === 'function') writer.releaseLock();
+    }
+  }catch(_){ }
+  try{ if(port) await port.close(); }catch(_){ }
+  port=null; writer=null; lineReader=null;
+  setDevState('⏹ Disconnected'); setBootState('—'); isBoot=false;
+  lastEpochSent=null;
+  setTimeState('⏱ Time: auto');
+  pendingSaveRows=null;
+  awaitingDeviceSaveAuthorization=false;
+  ['btnDisconnect','btnEnterBoot','btnReqRead','btnReqSave','btnCsvLoad','btnCsvSave','btnBackupLocal','btnRestoreLocal','btnFlash'].forEach(id=> el(id).disabled=true);
+  updateDriveButtons();
+}
+
+async function writeLine(s){
+  if(!writer) return;
+  await writer.write(new TextEncoder().encode(s+'\n'));
+  log(serialLog, 'TX: '+s);
+}
+
+async function startContinuousRead(){
+  if(!lineReader) return;
+  try{
+    while(true){
+      const {value, done} = await lineReader.read();
+      if(done) break;
+      if(value === undefined) continue;
+      const rawLine = value.replace(/\r$/, '');
+      const line = rawLine.trim();
+      if(line.length === 0){
+        log(serialLog, 'RX:');
+      }else{
+        log(serialLog, 'RX: '+line);
+      }
+      await handleIncomingLine(line);
+    }
+  }catch(e){ log(serialLog,'Read loop stopped: '+e.message); }
+}
+
+async function handleIncomingLine(line){
+  if(!line) return;
+
+  if(line.startsWith('OK BOOT')){
+    isBoot=true;
+    setBootState('🟡 Bootloader');
+    updateFlashButton();
+    return;
+  }
+
+  if(line === 'OK DONE'){
+    setFwProgress(100);
+    alert('Flash complete.');
+    return;
+  }
+
+  const upper = line.toUpperCase();
+  if (upper.includes('REQTIME') || upper.includes('TIME?')){
+    await sendEpochToDevice('auto-request');
+    return;
+  }
+
+  if (upper.startsWith('EPOCH SYNCED')){
+    const msg = lastEpochSent ? `⏱ Time synced (${lastEpochSent})` : '⏱ Time synced';
+    setTimeState(msg);
+    log(timeLog, line);
+    return;
+  }
+
+  if (upper.startsWith('RESETTIMER')){
+    setTimeState('⏱ Time: requested');
+    log(timeLog, line);
+    await sendEpochToDevice('reset-timer');
+    return;
+  }
+
+  if (upper.startsWith('ERR LOCKED')){
+    log(timeLog, line);
+    awaitingDeviceSaveAuthorization=false;
+    pendingSaveRows=null;
+    alert('Unlock the ZeroKeyUSB to allow credential access.');
+    return;
+  }
+
+  if (upper.startsWith('ERR BUSY')){
+    log(serialLog, line);
+    awaitingDeviceSaveAuthorization=false;
+    pendingSaveRows=null;
+    alert('The ZeroKeyUSB is busy. Complete the current request on the device and try again.');
+    return;
+  }
+
+  if (line === 'REQUEST_SAVE'){
+    const rowsToSend = pendingSaveRows ?? gatherCredentialRows();
+    log(serialLog, `Sending ${rowsToSend.length} credential rows to the device…`);
+    await sendAllCredentialsToDevice(rowsToSend);
+    pendingSaveRows=null;
+    awaitingDeviceSaveAuthorization=false;
+    alert('Credentials sent to the ZeroKeyUSB. Confirm on the device to store them.');
+    return;
+  }
+
+  if(!readingRecords){
+    if(/^\d+$/.test(line)){
+      const n = parseInt(line,10);
+      if(n>0){
+        recordsToRead = n;
+        recordsReadCounter = 0;
+        readingRecords = true;
+        credTableBody.innerHTML='';
+        log(serialLog,'Expecting '+n+' CSV lines…');
+      }
+    }
+    return;
+  }
+
+  const parts = line.split(',');
+  if(parts.length < 3){
+    return;
+  }
+
+  let idx = recordsReadCounter;
+  let dataStart = 0;
+  if (parts.length >= 4 && /^\d+$/.test(parts[0].trim())){
+    idx = parseInt(parts[0].trim(), 10);
+    dataStart = 1;
+  }
+
+  const site=(parts[dataStart]||'').slice(0,16);
+  const user=(parts[dataStart+1]||'').slice(0,16);
+  const pass=(parts[dataStart+2]||'').slice(0,16);
+  const totp=parts.slice(dataStart+3).join(',');
+  appendCredRow(idx, site, user, pass, totp);
+  recordsReadCounter++;
+  if(recordsReadCounter>=recordsToRead){
+    readingRecords=false;
+    alert('Credentials imported.');
+  }
+}
+
+
+async function sendEpochToDevice(source){
+  if(!writer) return;
+  const epoch = String(epochUTC());
+  await writeLine(epoch);
+  lastEpochSent = epoch;
+  setTimeState(`⏱ Time: auto (${epoch})`);
+  const src = source === 'reset-timer' ? 'Reset timer' : 'Device request';
+  log(timeLog, `${src} → UTC epoch ${epoch}`);
+}
+
+
+async function enterBootloader(){
+  if (!port) return;
+  try{
+    try{ if(lineReader) await lineReader.cancel(); }catch(_){ }
+    try{
+      if(writer){
+        if (typeof writer.close === 'function') await writer.close();
+        if (typeof writer.releaseLock === 'function') writer.releaseLock();
+      }
+    }catch(_){ }
+    writer=null;
+    lineReader=null;
+    await port.close();
+    await port.open({ baudRate: 1200 });
+    await new Promise(r=>setTimeout(r,120));
+    await port.close();
+    await new Promise(r=>setTimeout(r,500));
+    await port.open({ baudRate:STANDARD_BAUD_RATE });
+    await setupSerialStreams();
+    isBoot=true;
+    setBootState('🟡 Bootloader');
+    updateFlashButton();
+    await writeLine('HELLO');
+  }catch(e){ log(serialLog,'Failed entering bootloader: '+e.message); }
+}
+
+// ===== Credentials =====
+const credTableBody = document.querySelector('#credTable tbody');
+function appendCredRow(index, site, user, pass, totp){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${index}</td>
+    <td><input class="form-control form-control-sm" maxlength="16" value="${site||''}"></td>
+    <td><input class="form-control form-control-sm" maxlength="16" value="${user||''}"></td>
+    <td><div class="input-group input-group-sm">
+          <input type="password" class="form-control" maxlength="16" value="${pass||''}">
+          <button class="btn btn-outline-light btn-sm btn-toggle">Show</button>
+        </div></td>
+    <td><textarea class="form-control form-control-sm" rows="1" placeholder="Base32 or otpauth://…" style="min-height:2.25rem;" spellcheck="false">${totp||''}</textarea></td>
+    <td>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-light btn-up">↑</button>
+        <button class="btn btn-outline-light btn-down">↓</button>
+      </div>
+    </td>
+  `;
+  tr.querySelector('.btn-toggle').addEventListener('click',(ev)=>{
+    const inp = tr.querySelector('input[type="password"], input[type="text"]');
+    if (inp.type==='password'){ inp.type='text'; ev.target.textContent='Hide'; } else { inp.type='password'; ev.target.textContent='Show'; }
+  });
+  tr.querySelector('.btn-up').addEventListener('click', ()=>{ const prev=tr.previousElementSibling; if(prev){ tr.parentNode.insertBefore(tr, prev); reindex(); } });
+  tr.querySelector('.btn-down').addEventListener('click', ()=>{ const next=tr.nextElementSibling; if(next){ tr.parentNode.insertBefore(next, tr); reindex(); } });
+  credTableBody.appendChild(tr);
+}
+function reindex(){ [...credTableBody.querySelectorAll('tr')].forEach((row,i)=> row.querySelector('td').textContent=i ); }
+
+async function requestImportFromDevice(){
+  if (!writer) return;
+  readingRecords=false;
+  recordsReadCounter=0;
+  recordsToRead=0;
+  await writeLine('EXPORT');
+  log(serialLog,'Waiting for device authorization (hold the center button) to export credentials.');
+}
+function gatherCredentialRows(){
+  const rows=[...credTableBody.querySelectorAll('tr')];
+  return rows.map(row=>{
+    const tds = row.querySelectorAll('td');
+    const idx = tds[0].textContent.trim();
+    const site = tds[1].querySelector('input').value.trim().slice(0,16);
+    const user = tds[2].querySelector('input').value.trim().slice(0,16);
+    const pass = tds[3].querySelector('input').value.trim().slice(0,16);
+    const totp = (tds[4].querySelector('textarea')?.value||'').replace(/[\r\n]+/g,' ').trim();
+    let line = `${idx},${site},${user},${pass}`;
+    if (totp.length>0) line += `,${totp}`;
+    return line;
+  });
+}
+
+async function sendAllCredentialsToDevice(rowsOverride){
+  if (!writer) return;
+  const rows = rowsOverride ?? gatherCredentialRows();
+  await writeLine(String(rows.length));
+  for(const line of rows){
+    await writeLine(line);
+  }
+}
+
+async function initiateCredentialSave(){
+  if (!writer) return;
+  if (awaitingDeviceSaveAuthorization){
+    alert('Waiting for device authorization. Hold the center button on the ZeroKeyUSB.');
+    return;
+  }
+  pendingSaveRows = gatherCredentialRows();
+  awaitingDeviceSaveAuthorization=true;
+  try{
+    await writeLine('IMPORT');
+    log(serialLog,'Waiting for device authorization (hold the center button) to save credentials.');
+  }catch(e){
+    awaitingDeviceSaveAuthorization=false;
+    pendingSaveRows=null;
+    alert('Failed to request device authorization: '+(e?.message||e));
+    log(serialLog, 'Failed to request save authorization: '+(e?.stack||e));
+  }
+}
+
+// CSV
+el('btnCsvLoad').addEventListener('click', ()=> el('csvInput').click());
+el('csvInput').addEventListener('change', ()=>{
+  const f = el('csvInput').files[0]; if(!f) return;
+  const fr = new FileReader();
+  fr.onload = ()=>{
+    const lines = String(fr.result).split('\n').map(l=>l.replace('\r','').trim()).filter(Boolean);
+    credTableBody.innerHTML='';
+    lines.forEach((line, idx)=>{
+      const parts=line.split(',');
+      const site=parts[0]||'', user=parts[1]||'', pw=parts[2]||'', totp=parts.slice(3).join(',');
+      appendCredRow(idx, site, user, pw, totp);
+    });
+    alert('CSV loaded.');
+  };
+  fr.readAsText(f);
+});
+el('btnCsvSave').addEventListener('click', ()=>{
+  const rows=[...credTableBody.querySelectorAll('tr')];
+  const csv = rows.map(r=>{
+    const t=r.querySelectorAll('td');
+    const site=t[1].querySelector('input').value;
+    const user=t[2].querySelector('input').value;
+    const pw=t[3].querySelector('input').value;
+    const totp=t[4].querySelector('textarea').value||'';
+    return [site,user,pw,totp].join(',');
+  }).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='credentials.csv'; a.click();
+});
+
+// ===== Encrypted backups =====
+async function deriveKey(pass, salt){
+  const enc=new TextEncoder();
+  const mat=await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2', salt, iterations:200000, hash:'SHA-256'}, mat, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']);
+}
+function collectTableAsJSON(){
+  const rows=[...credTableBody.querySelectorAll('tr')];
+  return rows.map(r=>{
+    const t=r.querySelectorAll('td');
+    return {
+      index: Number(t[0].textContent.trim()||'0'),
+      site: t[1].querySelector('input').value,
+      user: t[2].querySelector('input').value,
+      pass: t[3].querySelector('input').value,
+      totp: t[4].querySelector('textarea').value||''
+    };
+  });
+}
+function loadJSONIntoTable(list){ credTableBody.innerHTML=''; list.forEach((rec,i)=> appendCredRow(rec.index ?? i, rec.site||'', rec.user||'', rec.pass||'', rec.totp||'')); reindex(); }
+
+async function backupLocal(){
+  const pass = el('bkPassSave').value; if(!pass){ alert('Enter a passphrase.'); return; }
+  const data = new TextEncoder().encode(JSON.stringify({v:1, created:new Date().toISOString(), records: collectTableAsJSON()}));
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await deriveKey(pass, salt);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, data));
+  const out={ type:'zerokeyusb/backup', alg:'PBKDF2-SHA256 + AES-256-GCM', kdf:{iterations:200000, salt:Array.from(salt)}, iv:Array.from(iv), ciphertext:btoa(String.fromCharCode(...ct)) };
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:'application/x-zerokeyusb+backup'})); a.download='zerokey-backup.zkb'; a.click();
+}
+async function restoreLocal(){
+  const pass=el('bkPassLoad').value, file=el('bkFileInput').files[0];
+  if(!pass || !file){ alert('Select a file and enter the passphrase.'); return; }
+  const text=await file.text(); let obj;
+  try{ obj=JSON.parse(text); }catch(_){ alert('Invalid file.'); return; }
+  try{
+    const salt=new Uint8Array(obj.kdf?.salt||[]);
+    const iv=new Uint8Array(obj.iv||[]);
+    const key=await deriveKey(pass, salt);
+    const ct=Uint8Array.from(atob(obj.ciphertext), c=>c.charCodeAt(0));
+    const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct));
+    const payload=JSON.parse(new TextDecoder().decode(plain));
+    if(!payload.records) throw new Error('No records');
+    loadJSONIntoTable(payload.records);
+    alert('Backup restored to the table.');
+  }catch(e){ alert('Could not decrypt/restore: '+e.message); }
+}
+
+el('btnBackupLocal').addEventListener('click', backupLocal);
+el('btnRestoreLocal').addEventListener('click', restoreLocal);
+
+// ===== Google Drive (Placeholders) =====
+el('btnDriveLogin').addEventListener('click', ()=>{
+    isSignedInToDrive = !isSignedInToDrive;
+    updateDriveButtons();
+    if(isSignedInToDrive) {
+        alert('Signed in (placeholder). Drive operations are now enabled if the device is connected.');
+    } else {
+        alert('Signed out (placeholder).');
+    }
+});
+el('btnDriveBackup').addEventListener('click', ()=>{
+  if(!port) { alert('Connect to the device first.'); return; }
+  alert('Google Drive backup is not fully implemented in this standalone HTML file, as it requires Google API keys and a full OAuth flow.');
+});
+el('btnDriveRestore').addEventListener('click', ()=>{
+  if(!port) { alert('Connect to the device first.'); return; }
+  alert('Google Drive restore is not fully implemented in this standalone HTML file, as it requires Google API keys and a full OAuth flow.');
+});
+
+// ===== Firmware (predefined) =====
+
+function setFwProgress(p){ const v=Math.max(0,Math.min(100,Math.round(p))); const bar=el('fwBar'); bar.style.width=v+'%'; bar.textContent=v+'%'; }
+function updateFlashButton(){ el('btnFlash').disabled = !(writer && isBoot && selectedFw); }
+
+// CRC32
+const CRC32_TABLE = (()=>{ const t=new Uint32Array(256); for(let i=0;i<256;i++){ let c=i; for(let j=0;j<8;j++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; } return t; })();
+function crc32(bytes){ let c=0xFFFFFFFF; for(let i=0;i<bytes.length;i++) c=CRC32_TABLE[(c^bytes[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+
+async function flashFirmware(){
+  if (!writer || !selectedFw) return;
+  // ... (Alerta omitida)
+  try{
+    const fw = selectedFw;
+    const total = fw.length; const t0=performance.now();
+    setFwProgress(0); el('fwSpeed').textContent='—';
+
+    // --- PASO 1: HELLO y ESPERA ---
+    await writeLine('HELLO');
+    await new Promise(r => setTimeout(r, 200)); // Espera a que el Bootloader procese 'HELLO'
+
+    // --- PASO 2: ERASE APP y ESPERA ---
+    await writeLine('ERASE APP');
+    // Aumentamos la pausa para dar tiempo a la operación de borrado de Flash, que es lenta.
+    log(el('fwLog'),'Borrando memoria flash, esperando 2 segundos...');
+    await new Promise(r => setTimeout(r, 2000)); 
+
+    const chunk=256; let addr=0;
+    for(let off=0; off<total; off+=chunk){
+      const block=fw.subarray(off, Math.min(off+chunk, total));
+      const c=crc32(block);
+      
+      // Enviamos metadatos
+      await writeLine(`WRITE ${addr} ${block.length} ${c}`);
+      
+      // Pausa CLAVE de 100ms: Damos tiempo al Bootloader para preparar el buffer.
+      await new Promise(r => setTimeout(r, 100)); 
+      
+      // Enviamos datos binarios
+      await writer.write(block); 
+      
+      // Pausa de 100ms: Damos tiempo al Bootloader para escribir en Flash.
+      // Si el Bootloader tarda en escribir, esta pausa es vital.
+      await new Promise(r => setTimeout(r, 100));
+
+      log(el('fwLog'), `TX DATA: ${block.length} bytes @0x${addr.toString(16)}`);
+      addr += block.length;
+      setFwProgress((off+block.length)*100/total);
+    }
+    
+    // --- PASO 3: DONE y DESCONEXIÓN CONTROLADA ---
+    await writeLine('DONE');
+    
+    // Pausa Larga de 5 segundos para el proceso final de Bootloader/reinicio.
+    log(el('fwLog'),'Flasheo completado. Esperando 5 segundos para el reinicio del dispositivo...');
+    await new Promise(r => setTimeout(r, 5000));
+    
+    // Intentamos cerrar la conexión de forma limpia para evitar el NetworkError.
+    await disconnectPort();
+    
+    // ... (Métricas de tiempo y alerta de éxito) ...
+    
+  }catch(e){ 
+    alert('Flashing error: '+e.message); 
+    log(el('fwLog'), 'Flashing failed: ' + e.stack||e.message);
+  }
+}
+
+el('fwSelect').addEventListener('change', async (ev)=>{
+  const val = ev.target.value;
+
+  if (val === 'custom'){
+    el('fwFileHidden').click();
+    return;
+  }
+
+  selectedFw = null;
+  selectedFwName = val || '—';
+  el('fwInfo').textContent = val ? 'Loading…' : '—';
+  el('fwSize').textContent = '—';
+  updateFlashButton();
+
+  if (!val){
+    return;
+  }
+
+  try {
+    const url = `firmware/${val}.bin`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    selectedFw = new Uint8Array(buffer);
+    selectedFwName = `${val}.bin`;
+
+    el('fwInfo').textContent = `Downloaded: ${val}.bin`;
+    el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
+  } catch (e) {
+    selectedFw = null;
+    el('fwInfo').textContent = `Error loading firmware: ${e.message}`;
+    console.error('Firmware download failed', e);
+  }
+
+  updateFlashButton();
+});
+
+el('fwFileHidden').addEventListener('change', async ()=>{
+  const f = el('fwFileHidden').files[0]; if(!f) return;
+  const name=f.name.toLowerCase();
+  if(name.endsWith('.uf2')){ alert('UF2 is not supported over Serial. Use .bin or .hex.'); return; }
+  if(name.endsWith('.hex')){
+    const text = await f.text();
+    selectedFw = ihexToBin(text);
+  }else{
+    selectedFw = new Uint8Array(await f.arrayBuffer());
+  }
+  selectedFwName = f.name;
+  el('fwInfo').textContent = `File: ${f.name}`;
+  el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
+  updateFlashButton();
+});
+
+// Intel HEX → BIN
+function ihexToBin(text){
+  const lines=text.trim().split(/\r?\n/); let upper=0, max=0; const recs=[];
+  for(const ln of lines){ if(!ln.startsWith(':')) continue;
+    const len=parseInt(ln.substr(1,2),16), addr=parseInt(ln.substr(3,4),16), type=parseInt(ln.substr(7,2),16);
+    const data=ln.substr(9, len*2);
+    if(type===0x04){ upper=parseInt(data,16)<<16; continue; }
+    if(type===0x00){
+      const abs=upper+addr; const bytes=new Uint8Array(len);
+      for(let i=0;i<len;i++) bytes[i]=parseInt(data.substr(i*2,2),16);
+      recs.push({addr:abs, bytes}); max=Math.max(max, abs+len);
+    }
+  }
+  const out=new Uint8Array(max); for(const r of recs) out.set(r.bytes, r.addr); return out;
+}
+
+// ===== UI events =====
+el('btnConnect').addEventListener('click', connectPort);
+el('btnDisconnect').addEventListener('click', disconnectPort);
+el('btnEnterBoot').addEventListener('click', enterBootloader);
+el('btnReqRead').addEventListener('click', requestImportFromDevice);
+el('btnReqSave').addEventListener('click', initiateCredentialSave);
+el('btnBackupLocal').addEventListener('click', backupLocal);
+el('btnRestoreLocal').addEventListener('click', restoreLocal);
+el('btnFlash').addEventListener('click', flashFirmware);
+
+// Init
+setDevState('⏹ Disconnected'); setBootState('—');
+updateDriveButtons();
+</script>
+</body>
+</html>
