@@ -18,6 +18,7 @@
 */
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <sam.h>
 #include "sam_ba_monitor.h"
 #include "board_definitions.h"
@@ -26,6 +27,76 @@
 #include "board_driver_jtag.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
+
+// --- Configuración de flag en el final de la Flash de aplicación ---
+#define FLASH_PAGE_SIZE        (64u)          // SAMD21: 64 bytes
+#define MAX_FLASH_ADDR         (0x00040000u)  // Ajusta si tu parte tiene otra Flash size
+#define FLAG_ADDRESS           (MAX_FLASH_ADDR - 4u)
+
+#define APP_VERIFIED_MAGIC     (0xCAFEF00Du)
+#define APP_PENALIZED_MAGIC    (0xDEADBEEFu)
+
+static inline void nvm_wait_ready(void) {
+  while (!(NVMCTRL->INTFLAG.reg & NVMCTRL_INTFLAG_READY)) { /* wait */ }
+}
+
+// Precaución: escribe una PÁGINA (64B) con el contenido de 'src' (64B)
+static void nvm_write_page(uint32_t dst_addr, const uint8_t *src64B) {
+  // Forzar escritura manual (WP explícito)
+  NVMCTRL->CTRLB.bit.MANW = 1;
+
+  // 1) Volcar 64B al "page buffer" escribiendo en la dirección mapeada
+  //    (16 palabras de 32 bits)
+  volatile uint32_t *dst32 = (volatile uint32_t *)(dst_addr & ~(FLASH_PAGE_SIZE - 1u));
+  const uint32_t *src32 = (const uint32_t *)src64B;
+
+  for (uint32_t i = 0; i < (FLASH_PAGE_SIZE / 4u); i++) {
+    dst32[i] = src32[i];
+  }
+
+  // 2) Lanzar "Write Page" sobre esa página
+  NVMCTRL->ADDR.reg = ((uint32_t)dst32) / 2u;  // Dirección en palabras
+  nvm_wait_ready();
+  NVMCTRL->CTRLA.reg = NVMCTRL_CTRLA_CMDEX_KEY | NVMCTRL_CTRLA_CMD_WP;
+  nvm_wait_ready();
+}
+
+// Escribe el magic en la última palabra (FLAG_ADDRESS) SIN borrar fila
+static void flash_write_flag(uint32_t magic) {
+  uint32_t page_base = FLAG_ADDRESS & ~(FLASH_PAGE_SIZE - 1u);
+  uint8_t  buf[FLASH_PAGE_SIZE];
+
+  // 1) Copiar contenido actual de la página (64B)
+  const uint8_t *p = (const uint8_t *)page_base;
+  for (uint32_t i = 0; i < FLASH_PAGE_SIZE; i++) buf[i] = p[i];
+
+  // 2) Inyectar magic en el offset exacto dentro de la página
+  uint32_t off = (uint32_t)(FLAG_ADDRESS - page_base);
+  buf[off + 0] = (uint8_t)(magic >> 0);
+  buf[off + 1] = (uint8_t)(magic >> 8);
+  buf[off + 2] = (uint8_t)(magic >> 16);
+  buf[off + 3] = (uint8_t)(magic >> 24);
+
+  // 3) Programar toda la página (sin row erase)
+  nvm_write_page(page_base, buf);
+}
+
+// Busy-wait basado en tu estilo de 500ms (125000 iteraciones @ 1MHz)
+static void delay_ms(uint32_t ms) {
+  // Con 125000 iteraciones ≈ 500 ms => 250000 iter/s => 250 iter/ms
+  const uint32_t iters_per_ms = 250u;
+  uint32_t total = iters_per_ms * ms;
+  for (uint32_t i = 0; i < total; i++) {
+    __asm__ __volatile__("");
+  }
+}
+
+// Stub de verificación criptográfica lenta (reemplaza por la real)
+static bool verify_application_crypto_check(void) {
+  // TODO: implementar la verificación de firma real (puede tardar minutos)
+  // Devuelve true si la app es auténtica y válida; false en caso contrario.
+  return false;
+}
 
 extern uint32_t __sketch_vectors_ptr; // Exported value from linker script
 extern void board_init(void);
@@ -148,10 +219,32 @@ static void check_start_application(void)
 #endif
 */
 
+  uint32_t flag = *(volatile const uint32_t *)FLAG_ADDRESS;
+
+  bool should_jump_fast = false;
+
+  if (flag == APP_VERIFIED_MAGIC || flag == APP_PENALIZED_MAGIC) {
+    should_jump_fast = true;
+  } else {
+    bool ok = verify_application_crypto_check();
+    if (ok) {
+      flash_write_flag(APP_VERIFIED_MAGIC);
+      should_jump_fast = true;
+    } else {
+      delay_ms(15000u);
+      flash_write_flag(APP_PENALIZED_MAGIC);
+      should_jump_fast = true;
+    }
+  }
+
 #ifdef CONFIGURE_PMIC
-  jump_to_app = true;
+  if (should_jump_fast) {
+    jump_to_app = true;
+  }
 #else
-  jump_to_application();
+  if (should_jump_fast) {
+    jump_to_application();
+  }
 #endif
 
 }
