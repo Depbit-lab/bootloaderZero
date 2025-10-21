@@ -97,6 +97,7 @@ SOURCES= \
   board_init.c \
   board_startup.c \
   main.c \
+  zk_blake2s_mac.c \
   sam_ba_usb.c \
   sam_ba_cdc.c \
   sam_ba_monitor.c
