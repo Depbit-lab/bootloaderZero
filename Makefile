@@ -62,7 +62,7 @@ NAME?=samd21_sam_ba
 
 # -----------------------------------------------------------------------------
 # Compiler options
-SAM_BA_INTERFACES?=SAM_BA_BOTH_INTERFACES
+SAM_BA_INTERFACES?=SAM_BA_USBCDC_ONLY
 CFLAGS_EXTRA=-D__SAMD21G18A__ -DBOARD_ID_$(BOARD_ID) -D$(SAM_BA_INTERFACES)
 CFLAGS=-mthumb -mcpu=cortex-m0plus -Wall -c -std=gnu99 -ffunction-sections -fdata-sections -nostdlib -nostartfiles --param max-inline-insns-single=500
 ifdef DEBUG
@@ -93,15 +93,19 @@ SOURCES= \
   board_driver_led.c \
   board_driver_pmic.c \
   board_driver_jtag.c \
-  board_driver_serial.c \
   board_driver_usb.c \
   board_init.c \
   board_startup.c \
   main.c \
   sam_ba_usb.c \
   sam_ba_cdc.c \
-  sam_ba_monitor.c \
+  sam_ba_monitor.c
+
+ifneq (,$(filter $(SAM_BA_INTERFACES),SAM_BA_UART_ONLY SAM_BA_BOTH_INTERFACES))
+SOURCES+= \
+  board_driver_serial.c \
   sam_ba_serial.c
+endif
 
 OBJECTS=$(addprefix $(BUILD_PATH)/, $(SOURCES:.c=.o))
 DEPS=$(addprefix $(BUILD_PATH)/, $(SOURCES:.c=.d))
