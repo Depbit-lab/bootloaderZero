@@ -15,7 +15,7 @@ typedef struct {
 } fw_footer_t;
 
 #define APPLICATION_START_ADDRESS 0x00002000u
-#define FLASH_END_ADDRESS         0x00008000u
+#define FLASH_END_ADDRESS         0x00040000u
 #define FW_FOOTER_ADDRESS         (FLASH_END_ADDRESS - FW_FOOTER_SIZE)
 
 #endif /* ZK_FW_FOOTER_H */
