@@ -26,12 +26,9 @@
 #include <string.h>
 
 #include "sam_ba_monitor.h"
-#include "sam_ba_serial.h"
-#include "board_driver_serial.h"
 #include "board_driver_usb.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
-#include "board_driver_led.h"
 
 /* Provides one common interface to handle both USART and USB-CDC */
 typedef struct
@@ -52,21 +49,6 @@ typedef struct
   uint32_t (*getdata_xmd)(void* data, uint32_t length);
 } t_monitor_if;
 
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-/* Initialize structures with function pointers from supported interfaces */
-static const t_monitor_if uart_if =
-{
-  .put_c =       serial_putc,
-  .get_c =       serial_getc,
-  .is_rx_ready = serial_is_rx_ready,
-  .putdata =     serial_putdata,
-  .getdata =     serial_getdata,
-  .putdata_xmd = serial_putdata_xmd,
-  .getdata_xmd = serial_getdata_xmd
-};
-#endif
-
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
 /* USB doesn't use Xmodem protocol, since USB already includes flow control */
 static const t_monitor_if usbcdc_if =
 {
@@ -78,58 +60,11 @@ static const t_monitor_if usbcdc_if =
   .putdata_xmd =   cdc_write_buf,
   .getdata_xmd =   cdc_read_buf_xmd
 };
-#endif
 
 /* The pointer to the interface object used by the monitor */
 static t_monitor_if * ptr_monitor_if = NULL;
 
-/* Pulse generation counters to keep track of the time remaining for each pulse type */
-#define TX_RX_LED_PULSE_PERIOD 100
-static volatile uint16_t txLEDPulse = 0; // time remaining for Tx LED pulse
-static volatile uint16_t rxLEDPulse = 0; // time remaining for Rx LED pulse
-
 #define APP_START_ADDRESS 0x00002000UL
-
-/* Public key used by the ZeroBootloader protocol (placeholder values). */
-static const uint8_t ZK_PUBKEY[32] =
-{
-  0x8f, 0x32, 0x64, 0xa1, 0x5b, 0xe1, 0x8c, 0x42,
-  0x11, 0x29, 0x50, 0x9a, 0x7f, 0xe6, 0x30, 0x1d,
-  0xab, 0x03, 0xdf, 0x55, 0x7e, 0xc9, 0x76, 0x4a,
-  0x8a, 0x7b, 0x93, 0xf1, 0x12, 0x54, 0x3e, 0x6c
-};
-
-/* Minimal cryptography stubs used by the protocol. */
-typedef struct
-{
-  uint32_t length;
-} crypto_sha256_ctx;
-
-static void crypto_sha256_init(crypto_sha256_ctx *ctx)
-{
-  if (ctx)
-  {
-    ctx->length = 0u;
-  }
-}
-
-static void crypto_sha256_update(crypto_sha256_ctx *ctx, const uint8_t *data, size_t len)
-{
-  (void)data;
-  if (ctx)
-  {
-    ctx->length += (uint32_t)len;
-  }
-}
-
-static void crypto_sha256_final(crypto_sha256_ctx *ctx, uint8_t out[32])
-{
-  (void)ctx;
-  if (out)
-  {
-    memset(out, 0, 32u);
-  }
-}
 
 /* Flash geometry */
 static uint32_t PAGE_SIZE = 0u;
@@ -141,25 +76,12 @@ static uint32_t page_buffer_index = 0u;
 
 static uint32_t sam_ba_putdata(t_monitor_if* pInterface, void const* data, uint32_t length)
 {
-  uint32_t result = pInterface->putdata(data, length);
-
-  LEDTX_on();
-  txLEDPulse = TX_RX_LED_PULSE_PERIOD;
-
-  return result;
+  return pInterface->putdata(data, length);
 }
 
 static uint32_t sam_ba_getdata(t_monitor_if* pInterface, void* data, uint32_t length)
 {
-  uint32_t result = pInterface->getdata(data, length);
-
-  if (result)
-  {
-    LEDRX_on();
-    rxLEDPulse = TX_RX_LED_PULSE_PERIOD;
-  }
-
-  return result;
+  return pInterface->getdata(data, length);
 }
 
 static void eraseFlash(uint32_t dst_addr)
@@ -256,9 +178,6 @@ static uint32_t pending_write_length = 0u;
 static uint32_t pending_write_crc = 0u;
 static uint32_t write_bytes_received = 0u;
 static uint32_t write_crc_accum = 0u;
-static crypto_sha256_ctx write_hash_ctx;
-static uint8_t write_hash_result[32];
-
 static void protocol_reset_line(void)
 {
   cmd_length = 0u;
@@ -273,8 +192,6 @@ static void protocol_reset_state(void)
   pending_write_crc = 0u;
   write_bytes_received = 0u;
   write_crc_accum = 0xFFFFFFFFu;
-  crypto_sha256_init(&write_hash_ctx);
-  memset(write_hash_result, 0, sizeof(write_hash_result));
   protocol_reset_line();
   page_buffer_index = 0u;
 }
@@ -301,8 +218,6 @@ static bool protocol_begin_write(uint32_t address, uint32_t length, uint32_t crc
   write_crc_accum = 0xFFFFFFFFu;
   parser_state = STATE_WRITE_DATA;
   page_buffer_index = 0u;
-
-  crypto_sha256_init(&write_hash_ctx);
   return true;
 }
 
@@ -493,7 +408,6 @@ static void protocol_receive_write_data(void)
   {
     uint8_t byte = buffer[i];
 
-    crypto_sha256_update(&write_hash_ctx, &byte, 1);
     write_crc_accum = crc32_update(write_crc_accum, &byte, 1);
 
     page_buffer_scratch[page_buffer_index++] = byte;
@@ -522,7 +436,6 @@ static void protocol_receive_write_data(void)
       page_buffer_index = 0u;
     }
 
-    crypto_sha256_final(&write_hash_ctx, write_hash_result);
     uint32_t computed_crc = write_crc_accum ^ 0xFFFFFFFFu;
     if (computed_crc == pending_write_crc)
     {
@@ -538,18 +451,8 @@ static void protocol_receive_write_data(void)
 
 void sam_ba_monitor_init(uint8_t com_interface)
 {
-#if defined(SAM_BA_UART_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-  if (com_interface == SAM_BA_INTERFACE_USART)
-  {
-    ptr_monitor_if = (t_monitor_if*) &uart_if;
-  }
-#endif
-#if defined(SAM_BA_USBCDC_ONLY)  ||  defined(SAM_BA_BOTH_INTERFACES)
-  if (com_interface == SAM_BA_INTERFACE_USBCDC)
-  {
-    ptr_monitor_if = (t_monitor_if*) &usbcdc_if;
-  }
-#endif
+  (void)com_interface;
+  ptr_monitor_if = (t_monitor_if*) &usbcdc_if;
 }
 
 void sam_ba_putdata_term(uint8_t* data, uint32_t length)
@@ -567,14 +470,6 @@ void call_applet(uint32_t address)
 
 void sam_ba_monitor_sys_tick(void)
 {
-  if (txLEDPulse && !(--txLEDPulse))
-  {
-    LEDTX_off();
-  }
-  if (rxLEDPulse && !(--rxLEDPulse))
-  {
-    LEDRX_off();
-  }
 }
 
 void sam_ba_monitor_run(void)
@@ -583,8 +478,6 @@ void sam_ba_monitor_run(void)
   PAGE_SIZE = pageSizes[NVMCTRL->PARAM.bit.PSZ];
   PAGES = NVMCTRL->PARAM.bit.NVMP;
   MAX_FLASH = PAGE_SIZE * PAGES;
-
-  (void)ZK_PUBKEY;
 
   if (ptr_monitor_if == NULL)
   {

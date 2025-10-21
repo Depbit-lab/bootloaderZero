@@ -24,8 +24,12 @@
 
 #define SAM_BA_VERSION              "2.0"
 
-#if !defined(SAM_BA_BOTH_INTERFACES) &&  !defined(SAM_BA_UART_ONLY) && !defined(SAM_BA_USBCDC_ONLY)
-#define SAM_BA_BOTH_INTERFACES
+#if defined(SAM_BA_UART_ONLY) || defined(SAM_BA_BOTH_INTERFACES)
+#error "This bootloader only supports the USB CDC monitor"
+#endif
+
+#ifndef SAM_BA_USBCDC_ONLY
+#define SAM_BA_USBCDC_ONLY
 #endif
 
 /* Selects USB as the communication interface of the monitor */
