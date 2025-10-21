@@ -148,10 +148,10 @@
                 <option value="default">Default (recommended)</option>
                 <option value="stable">ZeroKeyUSB v1.0.0 (stable)</option>
                 <option value="beta">ZeroKeyUSB v1.1.0-beta</option>
-                <option value="custom">— Load custom file…</option>
+                <option value="custom">— Load custom file (Requires signed .bin)...</option>
               </select>
               <input type="file" id="fwFileHidden" accept=".bin,.hex,.uf2" hidden />
-              <div class="small-muted mt-1" id="fwInfo">Pick an option to prepare flashing.</div>
+              <div class="small-muted mt-1" id="fwInfo">Pick an option. Remember the file **must be pre-signed** by the offline tool.</div>
             </div>
             <div class="col-12 col-md-3 d-grid">
               <button class="btn btn-success" id="btnFlash" disabled>⚡ Flash</button>
@@ -166,6 +166,7 @@
 
           <pre id="fwLog" class="log mono"></pre>
           <div class="small-muted">Protocol: <code>HELLO</code>, <code>ERASE APP</code>, <code>WRITE addr len crc32</code>, <code>DONE</code>. Use Bootloader (↩️ 1200 baud).</div>
+          <div class="small-muted">🚨 **IMPORTANTE:** El tiempo de reinicio es de ~20 segundos para cubrir la penalización de 15s si la verificación falla.</div>
           <div class="mt-2">
             <button class="btn btn-secondary" id="btnEnterBoot" disabled>↩️ Enter Bootloader</button>
           </div>
@@ -458,7 +459,7 @@ async function enterBootloader(){
   }catch(e){ log(serialLog,'Failed entering bootloader: '+e.message); }
 }
 
-// ===== Credentials =====
+// ===== Credentials (Lógica sin cambios) =====
 const credTableBody = document.querySelector('#credTable tbody');
 function appendCredRow(index, site, user, pass, totp){
   const tr = document.createElement('tr');
@@ -571,7 +572,7 @@ el('btnCsvSave').addEventListener('click', ()=>{
   a.download='credentials.csv'; a.click();
 });
 
-// ===== Encrypted backups =====
+// ===== Encrypted backups (Lógica sin cambios) =====
 async function deriveKey(pass, salt){
   const enc=new TextEncoder();
   const mat=await crypto.subtle.importKey('raw', enc.encode(pass), 'PBKDF2', false, ['deriveKey']);
@@ -642,30 +643,33 @@ el('btnDriveRestore').addEventListener('click', ()=>{
   alert('Google Drive restore is not fully implemented in this standalone HTML file, as it requires Google API keys and a full OAuth flow.');
 });
 
-// ===== Firmware (predefined) =====
+// ===== Firmware (MODIFICADO) =====
 
 function setFwProgress(p){ const v=Math.max(0,Math.min(100,Math.round(p))); const bar=el('fwBar'); bar.style.width=v+'%'; bar.textContent=v+'%'; }
+// El firmware debe ser pre-firmado. No se permite .hex sin firmar.
 function updateFlashButton(){ el('btnFlash').disabled = !(writer && isBoot && selectedFw); }
 
-// CRC32
+// CRC32 (Se mantiene solo para verificación de chunk en el protocolo de flasheo)
 const CRC32_TABLE = (()=>{ const t=new Uint32Array(256); for(let i=0;i<256;i++){ let c=i; for(let j=0;j<8;j++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[i]=c>>>0; } return t; })();
 function crc32(bytes){ let c=0xFFFFFFFF; for(let i=0;i<bytes.length;i++) c=CRC32_TABLE[(c^bytes[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
 
 async function flashFirmware(){
   if (!writer || !selectedFw) return;
-  // ... (Alerta omitida)
+  // Se asume que selectedFw ya incluye el footer de 28 bytes generado por la Signer Tool.
+  
   try{
     const fw = selectedFw;
-    const total = fw.length; const t0=performance.now();
+    const total = fw.length; 
+    const t0=performance.now();
     setFwProgress(0); el('fwSpeed').textContent='—';
 
     // --- PASO 1: HELLO y ESPERA ---
     await writeLine('HELLO');
-    await new Promise(r => setTimeout(r, 200)); // Espera a que el Bootloader procese 'HELLO'
+    await new Promise(r => setTimeout(r, 200));
 
     // --- PASO 2: ERASE APP y ESPERA ---
+    // El bootloader borrará todo el espacio de la aplicación, incluyendo donde se escribirá el nuevo footer.
     await writeLine('ERASE APP');
-    // Aumentamos la pausa para dar tiempo a la operación de borrado de Flash, que es lenta.
     log(el('fwLog'),'Borrando memoria flash, esperando 2 segundos...');
     await new Promise(r => setTimeout(r, 2000)); 
 
@@ -674,17 +678,16 @@ async function flashFirmware(){
       const block=fw.subarray(off, Math.min(off+chunk, total));
       const c=crc32(block);
       
-      // Enviamos metadatos
+      // Enviamos metadatos. El bootloader escribe los datos, incluyendo el footer al final.
       await writeLine(`WRITE ${addr} ${block.length} ${c}`);
       
-      // Pausa CLAVE de 100ms: Damos tiempo al Bootloader para preparar el buffer.
+      // Pausa CLAVE de 100ms
       await new Promise(r => setTimeout(r, 100)); 
       
       // Enviamos datos binarios
       await writer.write(block); 
       
-      // Pausa de 100ms: Damos tiempo al Bootloader para escribir en Flash.
-      // Si el Bootloader tarda en escribir, esta pausa es vital.
+      // Pausa de 100ms
       await new Promise(r => setTimeout(r, 100));
 
       log(el('fwLog'), `TX DATA: ${block.length} bytes @0x${addr.toString(16)}`);
@@ -692,14 +695,16 @@ async function flashFirmware(){
       setFwProgress((off+block.length)*100/total);
     }
     
-    // --- PASO 3: DONE y DESCONEXIÓN CONTROLADA ---
+    // --- PASO 3: DONE y DESCONEXIÓN CONTROLADA (Tiempo de espera modificado) ---
     await writeLine('DONE');
     
-    // Pausa Larga de 5 segundos para el proceso final de Bootloader/reinicio.
-    log(el('fwLog'),'Flasheo completado. Esperando 5 segundos para el reinicio del dispositivo...');
-    await new Promise(r => setTimeout(r, 5000));
+    // TIEMPO DE ESPERA MODIFICADO: Aumentamos a 20 segundos.
+    // Esto cubre la penalización de 15 segundos si la verificación BLAKE2s/CRC falla, 
+    // asegurando que el proceso no se considere fallido prematuramente.
+    const REBOOT_DELAY_MS = 20000;
+    log(el('fwLog'),`Flasheo completado. Esperando ${REBOOT_DELAY_MS/1000} segundos para el reinicio y verificación del dispositivo (cubre penalización de 15s)...`);
+    await new Promise(r => setTimeout(r, REBOOT_DELAY_MS));
     
-    // Intentamos cerrar la conexión de forma limpia para evitar el NetworkError.
     await disconnectPort();
     
     // ... (Métricas de tiempo y alerta de éxito) ...
@@ -729,7 +734,8 @@ el('fwSelect').addEventListener('change', async (ev)=>{
   }
 
   try {
-    const url = `firmware/${val}.bin`;
+    // ASUMIMOS que el archivo descargado ya está firmado (e.g., 'default_signed_footer.bin')
+    const url = `firmware/${val}_signed_footer.bin`;
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
@@ -737,13 +743,13 @@ el('fwSelect').addEventListener('change', async (ev)=>{
 
     const buffer = await response.arrayBuffer();
     selectedFw = new Uint8Array(buffer);
-    selectedFwName = `${val}.bin`;
+    selectedFwName = `${val}_signed_footer.bin`;
 
-    el('fwInfo').textContent = `Downloaded: ${val}.bin`;
+    el('fwInfo').textContent = `Downloaded: ${selectedFwName} (PRE-SIGNED)`;
     el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
   } catch (e) {
     selectedFw = null;
-    el('fwInfo').textContent = `Error loading firmware: ${e.message}`;
+    el('fwInfo').textContent = `Error loading signed firmware: ${e.message}`;
     console.error('Firmware download failed', e);
   }
 
@@ -753,20 +759,24 @@ el('fwSelect').addEventListener('change', async (ev)=>{
 el('fwFileHidden').addEventListener('change', async ()=>{
   const f = el('fwFileHidden').files[0]; if(!f) return;
   const name=f.name.toLowerCase();
-  if(name.endsWith('.uf2')){ alert('UF2 is not supported over Serial. Use .bin or .hex.'); return; }
-  if(name.endsWith('.hex')){
-    const text = await f.text();
-    selectedFw = ihexToBin(text);
-  }else{
+  
+  if(name.endsWith('.uf2') || name.endsWith('.hex')){ 
+      // Deshabilitamos HEX/UF2 para forzar el uso de BINARIO pre-firmado.
+      alert('Solo se admite el flasheo de archivos BINARIOS (*.bin) pre-firmados.'); 
+      return; 
+  }
+  
+  if(name.endsWith('.bin')){
     selectedFw = new Uint8Array(await f.arrayBuffer());
   }
+  
   selectedFwName = f.name;
-  el('fwInfo').textContent = `File: ${f.name}`;
+  el('fwInfo').textContent = `File: ${f.name} (ASUMIDO PRE-FIRMADO)`;
   el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
   updateFlashButton();
 });
 
-// Intel HEX → BIN
+// Intel HEX → BIN (Se mantiene la función pero se restringe su uso arriba)
 function ihexToBin(text){
   const lines=text.trim().split(/\r?\n/); let upper=0, max=0; const recs=[];
   for(const ln of lines){ if(!ln.startsWith(':')) continue;
@@ -782,7 +792,7 @@ function ihexToBin(text){
   const out=new Uint8Array(max); for(const r of recs) out.set(r.bytes, r.addr); return out;
 }
 
-// ===== UI events =====
+// ===== UI events (Sin cambios) =====
 el('btnConnect').addEventListener('click', connectPort);
 el('btnDisconnect').addEventListener('click', disconnectPort);
 el('btnEnterBoot').addEventListener('click', enterBootloader);
