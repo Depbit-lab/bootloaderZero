@@ -66,6 +66,10 @@ static t_monitor_if * ptr_monitor_if = NULL;
 
 #define APP_START_ADDRESS 0x00002000UL
 
+#define FLASH_BASE      (0x00000000UL)
+#define FLASH_SIZE      (0x00040000UL)   /* 256 KiB */
+#define FOOTER_SIZE     (64U)
+
 /* Flash geometry */
 static uint32_t PAGE_SIZE = 0u;
 static uint32_t PAGES = 0u;
@@ -73,6 +77,11 @@ static uint32_t MAX_FLASH = 0u;
 /* Scratch buffer for accumulating data before writing to flash pages */
 static uint8_t page_buffer_scratch[1024];
 static uint32_t page_buffer_index = 0u;
+
+static inline uint32_t footer_addr(void)
+{
+  return (FLASH_BASE + FLASH_SIZE - FOOTER_SIZE);
+}
 
 static uint32_t sam_ba_putdata(t_monitor_if* pInterface, void const* data, uint32_t length)
 {
@@ -167,7 +176,8 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len)
 typedef enum
 {
   STATE_WAIT_CMD = 0,
-  STATE_WRITE_DATA
+  STATE_WRITE_DATA,
+  STATE_WRITE_FOOTER
 } parser_state_t;
 
 static parser_state_t parser_state = STATE_WAIT_CMD;
@@ -218,6 +228,18 @@ static bool protocol_begin_write(uint32_t address, uint32_t length, uint32_t crc
   write_crc_accum = 0xFFFFFFFFu;
   parser_state = STATE_WRITE_DATA;
   page_buffer_index = 0u;
+  return true;
+}
+
+static bool protocol_begin_write_footer(void)
+{
+  pending_write_address = footer_addr();
+  pending_write_length = FOOTER_SIZE;
+  pending_write_crc = 0u;
+  write_bytes_received = 0u;
+  write_crc_accum = 0xFFFFFFFFu;
+  page_buffer_index = 0u;
+  parser_state = STATE_WRITE_FOOTER;
   return true;
 }
 
@@ -339,6 +361,19 @@ static void protocol_handle_line(const char *line)
     return;
   }
 
+  if (strcmp(line, "WRITEFOOTER") == 0)
+  {
+    if (protocol_begin_write_footer())
+    {
+      protocol_send_response("OK WRITEFOOTER READY\n");
+    }
+    else
+    {
+      protocol_send_response("ERR WRITEFOOTER\n");
+    }
+    return;
+  }
+
   if (strcmp(line, "DONE") == 0)
   {
     protocol_send_response("OK DONE\n");
@@ -380,7 +415,7 @@ static void protocol_process_char(char value)
 
 static void protocol_receive_write_data(void)
 {
-  if (parser_state != STATE_WRITE_DATA)
+  if (parser_state != STATE_WRITE_DATA && parser_state != STATE_WRITE_FOOTER)
   {
     return;
   }
@@ -436,14 +471,21 @@ static void protocol_receive_write_data(void)
       page_buffer_index = 0u;
     }
 
-    uint32_t computed_crc = write_crc_accum ^ 0xFFFFFFFFu;
-    if (computed_crc == pending_write_crc)
+    if (parser_state == STATE_WRITE_DATA)
     {
-      protocol_send_response("OK WRITE DONE\n");
+      uint32_t computed_crc = write_crc_accum ^ 0xFFFFFFFFu;
+      if (computed_crc == pending_write_crc)
+      {
+        protocol_send_response("OK WRITE DONE\n");
+      }
+      else
+      {
+        protocol_send_response("ERR CRC\n");
+      }
     }
-    else
+    else if (parser_state == STATE_WRITE_FOOTER)
     {
-      protocol_send_response("ERR CRC\n");
+      protocol_send_response("OK WRITEFOOTER DONE\n");
     }
     protocol_reset_state();
   }
@@ -490,7 +532,7 @@ void sam_ba_monitor_run(void)
 
   while (1)
   {
-    if (parser_state == STATE_WRITE_DATA)
+    if (parser_state == STATE_WRITE_DATA || parser_state == STATE_WRITE_FOOTER)
     {
       protocol_receive_write_data();
       continue;
