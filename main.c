@@ -18,6 +18,9 @@
 */
 
 #include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
 #include <sam.h>
 #include "sam_ba_monitor.h"
 #include "board_definitions.h"
@@ -27,12 +30,49 @@
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
 
+#define FLASH_BASE      (0x00000000UL)
+#define FLASH_SIZE      (0x00040000UL)   /* 256 KiB */
+#define BOOTLOADER_SIZE (0x00002000UL)   /* 8 KiB Arduino Zero */
+#define APP_START       (FLASH_BASE + BOOTLOADER_SIZE)
+
+#define FOOTER_MAGIC    (0x5A4B5955UL)  /* 'ZKYU' */
+#define FOOTER_VERSION  (0x0001)
+#define FOOTER_SIZE     (64U)
+
+typedef struct __attribute__((packed)) {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t flags;
+  uint64_t seq;
+  uint8_t  mac[32];
+} fw_footer_t;
+
+static inline uint32_t footer_addr(void) {
+  return (FLASH_BASE + FLASH_SIZE - FOOTER_SIZE);
+}
+
+/* Clave placeholder: CAMBIAR EN PRODUCCIÓN */
+static const uint8_t MASTER_SECRET[16] = {
+  0x3A,0x92,0xC7,0x51,0x1D,0x60,0xE4,0xB9,
+  0x08,0xAF,0x33,0xDE,0x74,0x21,0x5C,0xF0
+};
+
+static void derive_token16(uint8_t out16[16]) {
+  for (int i = 0; i < 16; i++) {
+    out16[i] = (uint8_t)(MASTER_SECRET[i] ^ 0xA5);
+  }
+}
+
+extern void flash_read(uint32_t addr, void* dst, uint32_t len);
+extern void delay_ms(uint32_t ms);
+extern void jump_to_application(uint32_t app_start_addr);
+
 extern uint32_t __sketch_vectors_ptr; // Exported value from linker script
 extern void board_init(void);
 
 volatile uint32_t* pulSketch_Start_Address;
 
-static void jump_to_application(void) {
+static void do_jump_to_application(void) {
 
   /* Rebase the Stack Pointer */
   __set_MSP( (uint32_t)(__sketch_vectors_ptr) );
@@ -42,6 +82,48 @@ static void jump_to_application(void) {
 
   /* Jump to application Reset Handler in the application */
   asm("bx %0"::"r"(*pulSketch_Start_Address));
+}
+
+void flash_read(uint32_t addr, void* dst, uint32_t len) {
+  if (dst == NULL || len == 0) {
+    return;
+  }
+
+  memcpy(dst, (const void *)addr, len);
+}
+
+void delay_ms(uint32_t ms) {
+  while (ms--) {
+    for (uint32_t i = 0; i < 1000; i++) {
+      __asm__ __volatile__("nop");
+    }
+  }
+}
+
+void jump_to_application(uint32_t app_start_addr) {
+  (void)app_start_addr;
+  do_jump_to_application();
+}
+
+void check_mac_footer_and_boot(void) {
+  fw_footer_t f;
+  const uint32_t faddr = footer_addr();
+
+  flash_read(faddr, &f, sizeof(f));
+
+  uint8_t expected[16];
+  derive_token16(expected);
+
+  int valid = 0;
+  if (f.magic == FOOTER_MAGIC && f.version == FOOTER_VERSION) {
+    valid = (memcmp(f.mac, expected, 16) == 0);
+  }
+
+  if (!valid) {
+    delay_ms(15000);
+  }
+
+  jump_to_application(APP_START);
 }
 
 static volatile bool main_b_cdc_enable = false;
@@ -151,7 +233,7 @@ static void check_start_application(void)
 #ifdef CONFIGURE_PMIC
   jump_to_app = true;
 #else
-  jump_to_application();
+  check_mac_footer_and_boot();
 #endif
 
 }
@@ -204,7 +286,7 @@ int main(void)
 
 #ifdef CONFIGURE_PMIC
   if (jump_to_app == true) {
-    jump_to_application();
+    check_mac_footer_and_boot();
   }
 #endif
 
