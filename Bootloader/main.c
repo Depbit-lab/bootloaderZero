@@ -17,6 +17,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <sam.h>
 #include "sam_ba_monitor.h"
@@ -26,6 +27,9 @@
 #include "board_driver_jtag.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
+#include "board_driver_led.h"
+#include "signature_footer.h"
+#include "crc32.h"
 
 extern uint32_t __sketch_vectors_ptr; // Exported value from linker script
 extern void board_init(void);
@@ -49,6 +53,128 @@ static volatile bool main_b_cdc_enable = false;
 #ifdef CONFIGURE_PMIC
 static volatile bool jump_to_app = false;
 #endif
+
+static inline const zk_footer_t* footer_ptr(void) {
+  return (const zk_footer_t*)(FOOTER_ADDR);
+}
+
+static bool is_footer_valid_meta(const zk_footer_t *footer) {
+  if (footer == NULL) {
+    return false;
+  }
+
+  if (footer->magic != ZK_FOOTER_MAGIC) {
+    return false;
+  }
+
+  if (footer->tail_magic != ZK_FOOTER_TAIL) {
+    return false;
+  }
+
+  if (footer->version != 0x0001u) {
+    return false;
+  }
+
+  if (footer->algo != SIG_ALGO_CRC32K) {
+    return false;
+  }
+
+  if (footer->app_size == 0u || footer->app_size > APP_MAX_SIZE) {
+    return false;
+  }
+
+  if ((APP_START_ADDR + footer->app_size) > FOOTER_ADDR) {
+    return false;
+  }
+
+  return true;
+}
+
+static uint32_t compute_crc32_app_internal(uint32_t app_size, uint32_t *out_plain_crc) {
+  const uint8_t *app = (const uint8_t *)APP_START_ADDR;
+  uint32_t crc_plain = crc32_compute(app, app_size);
+
+  if (out_plain_crc != NULL) {
+    *out_plain_crc = crc_plain;
+  }
+
+  uint32_t key = ZK_CRC32K_KEY;
+  return crc32_update(crc_plain, &key, sizeof(key));
+}
+
+static bool is_app_signed_ok(void) {
+  const zk_footer_t *footer = footer_ptr();
+
+  if (!is_footer_valid_meta(footer)) {
+    return false;
+  }
+
+  uint32_t crc_plain = 0u;
+  uint32_t expected_sig = compute_crc32_app_internal(footer->app_size, &crc_plain);
+
+  if (crc_plain != footer->crc32_app) {
+    return false;
+  }
+
+  return (expected_sig == footer->sig32);
+}
+
+static void busy_wait_ms(uint32_t ms) {
+  if (ms == 0u) {
+    return;
+  }
+
+  uint32_t iterations_per_ms = (CPU_FREQUENCY / 1000u) / 12u;
+  if (iterations_per_ms == 0u) {
+    iterations_per_ms = 1u;
+  }
+  uint32_t iterations = iterations_per_ms * ms;
+
+  while (iterations-- > 0u) {
+    __NOP();
+  }
+}
+
+static void delay_with_blink_ms(uint32_t total_ms) {
+  if (total_ms == 0u) {
+    return;
+  }
+
+  LED_init();
+  LED_off();
+
+  const uint32_t step_ms = 100u;
+  uint32_t remaining = total_ms;
+
+  while (remaining > 0u) {
+    LED_toggle();
+    uint32_t chunk = (remaining < step_ms) ? remaining : step_ms;
+    busy_wait_ms(chunk);
+    remaining -= chunk;
+  }
+
+  LED_off();
+}
+
+static void perform_application_jump(bool delay_before_jump) {
+  if (delay_before_jump) {
+    delay_with_blink_ms(VERIFY_FAIL_DELAY_MS);
+  }
+
+#ifdef CONFIGURE_PMIC
+  jump_to_app = true;
+#else
+  jump_to_application();
+#endif
+}
+
+static void boot_decision_and_jump(void) {
+  if (is_app_signed_ok()) {
+    perform_application_jump(false);
+  } else {
+    perform_application_jump(true);
+  }
+}
 
 /**
  * \brief Check the application startup condition
@@ -148,11 +274,7 @@ static void check_start_application(void)
 #endif
 */
 
-#ifdef CONFIGURE_PMIC
-  jump_to_app = true;
-#else
-  jump_to_application();
-#endif
+  boot_decision_and_jump();
 
 }
 

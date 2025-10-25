@@ -96,6 +96,7 @@ SOURCES= \
   board_driver_usb.c \
   board_init.c \
   board_startup.c \
+  crc32.c \
   main.c \
   sam_ba_usb.c \
   sam_ba_cdc.c \

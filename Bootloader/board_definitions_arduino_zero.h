@@ -62,6 +62,25 @@
 /* Frequency of the board main oscillator */
 #define VARIANT_MAINOSC                   (32768ul)
 
+// --- Memory layout (SAMD21J18A, 256 KB) ---
+#define BOOTLOADER_SIZE                   (8u * 1024u)               // 0x00002000
+#define FLASH_TOTAL_SIZE                  (256u * 1024u)             // 0x00040000
+#define APP_START_ADDR                    (0x00000000u + BOOTLOADER_SIZE)
+#define APP_MAX_SIZE                      (FLASH_TOTAL_SIZE - BOOTLOADER_SIZE)
+
+// Fixed 64-byte footer placed at the end of flash
+#define FOOTER_SIZE                       (64u)
+#define FOOTER_ADDR                       (0x00040000u - FOOTER_SIZE) // 0x0003FFC0
+
+// Signature identifiers
+#define SIG_ALGO_CRC32K                   (0x0001u)
+
+// Embedded key (obfuscated). Replace with project-specific values per build.
+#define ZK_CRC32K_KEY                     (0x5A17C39Du ^ 0xA5A5A5A5u)
+
+// Boot timings
+#define VERIFY_FAIL_DELAY_MS              (15000u)
+
 /* Calibration values for DFLL48 pll */
 #define NVM_SW_CALIB_DFLL48M_COARSE_VAL   (58)
 #define NVM_SW_CALIB_DFLL48M_FINE_VAL     (64)

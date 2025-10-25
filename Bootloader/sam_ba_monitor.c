@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "sam_ba_monitor.h"
+#include "board_definitions.h"
 #include "board_driver_usb.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
@@ -64,7 +65,7 @@ static const t_monitor_if usbcdc_if =
 /* The pointer to the interface object used by the monitor */
 static t_monitor_if * ptr_monitor_if = NULL;
 
-#define APP_START_ADDRESS 0x00002000UL
+#define APP_START_ADDRESS (APP_START_ADDR)
 
 /* Flash geometry */
 static uint32_t PAGE_SIZE = 0u;
