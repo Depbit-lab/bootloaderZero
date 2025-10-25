@@ -71,9 +71,9 @@ def main() -> None:
     crc_app = crc32(app_bytes)
     sig32 = crc32(app_bytes + struct.pack("<I", ZK_CRC32K_KEY))
 
-    reserved = bytes(32)
+    reserved = bytes(40)
     footer = struct.pack(
-        "<IHHIIII32sI",
+        "<IHHIIII40sI",
         ZK_FOOTER_MAGIC,
         0x0001,
         SIG_ALGO_CRC32K,
