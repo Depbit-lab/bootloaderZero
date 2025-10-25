@@ -12,7 +12,7 @@ typedef struct __attribute__((packed)) {
     uint32_t app_size;    // actual application size in bytes
     uint32_t crc32_app;   // CRC32(app) without key (informational)
     uint32_t sig32;       // CRC32(app || K) validated by the bootloader
-    uint8_t  reserved[32];// Reserved for future use (e.g., HMAC-SHA256)
+    uint8_t  reserved[40];// Reserved for future use (e.g., HMAC-SHA256 plus metadata)
     uint32_t tail_magic;  // ZK_FOOTER_TAIL
 } zk_footer_t;
 
