@@ -819,7 +819,11 @@ function ihexToBin(text){
 
     const abs = upper + addr;
     if (abs < APP_START){
-      throw new Error(`HEX contiene datos en 0x${abs.toString(16)} < 0x${APP_START.toString(16)} (zona del bootloader)`);
+      // Algunos firmware oficiales incluyen el bootloader en el HEX.
+      // Ignoramos esos registros en lugar de fallar para permitir flashear
+      // únicamente la aplicación.
+      console.warn(`Ignorando datos en 0x${abs.toString(16)} < 0x${APP_START.toString(16)} (zona del bootloader)`);
+      continue;
     }
 
     const bytes = new Uint8Array(len);
