@@ -1,0 +1,15 @@
+device ATSAMD21G18
+si SWD
+speed 4000
+
+r
+erase
+
+# 1. Cargar el NUEVO BOOTLOADER SEGURO (samd21_bootloader.bin) en 0x0
+loadfile samd21_sam_ba.hex, 0x0
+
+
+
+r
+g
+exit
