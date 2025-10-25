@@ -131,14 +131,6 @@
       <SubType>compile</SubType>
       <Link>board_definitions.h</Link>
     </Compile>
-    <Compile Include="board_driver_led.c">
-      <SubType>compile</SubType>
-      <Link>board_driver_led.c</Link>
-    </Compile>
-    <Compile Include="board_driver_led.h">
-      <SubType>compile</SubType>
-      <Link>board_driver_led.h</Link>
-    </Compile>
     <Compile Include="board_driver_serial.c">
       <SubType>compile</SubType>
       <Link>board_driver_serial.c</Link>
