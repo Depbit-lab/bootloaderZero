@@ -27,7 +27,6 @@
 #include "board_driver_jtag.h"
 #include "sam_ba_usb.h"
 #include "sam_ba_cdc.h"
-#include "board_driver_led.h"
 #include "signature_footer.h"
 #include "crc32.h"
 
@@ -135,30 +134,17 @@ static void busy_wait_ms(uint32_t ms) {
   }
 }
 
-static void delay_with_blink_ms(uint32_t total_ms) {
+static void delay_ms(uint32_t total_ms) {
   if (total_ms == 0u) {
     return;
   }
 
-  LED_init();
-  LED_off();
-
-  const uint32_t step_ms = 100u;
-  uint32_t remaining = total_ms;
-
-  while (remaining > 0u) {
-    LED_toggle();
-    uint32_t chunk = (remaining < step_ms) ? remaining : step_ms;
-    busy_wait_ms(chunk);
-    remaining -= chunk;
-  }
-
-  LED_off();
+  busy_wait_ms(total_ms);
 }
 
 static void perform_application_jump(bool delay_before_jump) {
   if (delay_before_jump) {
-    delay_with_blink_ms(VERIFY_FAIL_DELAY_MS);
+    delay_ms(VERIFY_FAIL_DELAY_MS);
   }
 
 #ifdef CONFIGURE_PMIC
@@ -279,8 +265,8 @@ static void check_start_application(void)
 }
 
 #if DEBUG_ENABLE
-#	define DEBUG_PIN_HIGH 	port_pin_set_output_level(BOOT_LED, 1)
-#	define DEBUG_PIN_LOW 	port_pin_set_output_level(BOOT_LED, 0)
+#	define DEBUG_PIN_HIGH 	do{}while(0)
+#	define DEBUG_PIN_LOW 	do{}while(0)
 #else
 #	define DEBUG_PIN_HIGH 	do{}while(0)
 #	define DEBUG_PIN_LOW 	do{}while(0)
