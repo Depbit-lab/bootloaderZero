@@ -155,11 +155,11 @@ static void perform_application_jump(bool delay_before_jump) {
 }
 
 static void boot_decision_and_jump(void) {
-  if (is_app_signed_ok()) {
-    perform_application_jump(false);
-  } else {
-    perform_application_jump(true);
+  if (!is_app_signed_ok()) {
+    return;
   }
+
+  perform_application_jump(false);
 }
 
 /**
