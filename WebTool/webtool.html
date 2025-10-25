@@ -768,18 +768,59 @@ el('fwFileHidden').addEventListener('change', async ()=>{
 
 // Intel HEX → BIN
 function ihexToBin(text){
-  const lines=text.trim().split(/\r?\n/); let upper=0, max=0; const recs=[];
-  for(const ln of lines){ if(!ln.startsWith(':')) continue;
-    const len=parseInt(ln.substr(1,2),16), addr=parseInt(ln.substr(3,4),16), type=parseInt(ln.substr(7,2),16);
-    const data=ln.substr(9, len*2);
-    if(type===0x04){ upper=parseInt(data,16)<<16; continue; }
-    if(type===0x00){
-      const abs=upper+addr; const bytes=new Uint8Array(len);
-      for(let i=0;i<len;i++) bytes[i]=parseInt(data.substr(i*2,2),16);
-      recs.push({addr:abs, bytes}); max=Math.max(max, abs+len);
+  const APP_START = 0x2000;
+  const FLASH_TOTAL = 256 * 1024;
+  const lines = text.trim().split(/\r?\n/);
+  let upper = 0;
+  let max = APP_START;
+  const recs = [];
+
+  for (const ln of lines){
+    if(!ln.startsWith(':')) continue;
+    const len = parseInt(ln.substr(1,2),16);
+    const addr = parseInt(ln.substr(3,4),16);
+    const type = parseInt(ln.substr(7,2),16);
+    const data = ln.substr(9, len*2);
+
+    if(type === 0x04){
+      upper = parseInt(data,16) << 16;
+      continue;
     }
+
+    if(type !== 0x00 || len === 0){
+      continue;
+    }
+
+    const abs = upper + addr;
+    if (abs < APP_START){
+      throw new Error(`HEX contiene datos en 0x${abs.toString(16)} < 0x${APP_START.toString(16)} (zona del bootloader)`);
+    }
+
+    const bytes = new Uint8Array(len);
+    for(let i=0;i<len;i++){
+      bytes[i] = parseInt(data.substr(i*2,2),16);
+    }
+
+    recs.push({addr: abs, bytes});
+    max = Math.max(max, abs + len);
   }
-  const out=new Uint8Array(max); for(const r of recs) out.set(r.bytes, r.addr); return out;
+
+  if (recs.length === 0 || max <= APP_START){
+    throw new Error('HEX sin datos de aplicación válidos');
+  }
+
+  if (max > FLASH_TOTAL){
+    throw new Error(`HEX excede el tamaño de flash (0x${max.toString(16)} > 0x${FLASH_TOTAL.toString(16)})`);
+  }
+
+  const out = new Uint8Array(max - APP_START);
+  out.fill(0xFF);
+  for (const {addr, bytes} of recs){
+    const offset = addr - APP_START;
+    out.set(bytes, offset);
+  }
+
+  return out;
 }
 
 // ===== UI events =====
