@@ -750,20 +750,46 @@ el('fwSelect').addEventListener('change', async (ev)=>{
   updateFlashButton();
 });
 
-el('fwFileHidden').addEventListener('change', async ()=>{
-  const f = el('fwFileHidden').files[0]; if(!f) return;
-  const name=f.name.toLowerCase();
-  if(name.endsWith('.uf2')){ alert('UF2 is not supported over Serial. Use .bin or .hex.'); return; }
-  if(name.endsWith('.hex')){
-    const text = await f.text();
-    selectedFw = ihexToBin(text);
-  }else{
-    selectedFw = new Uint8Array(await f.arrayBuffer());
+el('fwFileHidden').addEventListener('change', async (ev)=>{
+  const input = ev.target;
+  const file = input.files && input.files[0];
+  if(!file){
+    selectedFw = null;
+    selectedFwName = '—';
+    updateFlashButton();
+    return;
   }
-  selectedFwName = f.name;
-  el('fwInfo').textContent = `File: ${f.name}`;
-  el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
-  updateFlashButton();
+
+  try {
+    el('fwInfo').textContent = `Processing ${file.name}…`;
+    el('fwSize').textContent = '—';
+
+    const lower = file.name.toLowerCase();
+    if(lower.endsWith('.uf2')){
+      throw new Error('UF2 is not supported over Serial. Use .bin or .hex.');
+    }
+
+    if(lower.endsWith('.hex')){
+      const text = await file.text();
+      selectedFw = ihexToBin(text);
+    }else{
+      selectedFw = new Uint8Array(await file.arrayBuffer());
+    }
+
+    selectedFwName = file.name;
+    el('fwInfo').textContent = `File: ${file.name}`;
+    el('fwSize').textContent = `${(selectedFw.length/1024).toFixed(1)} KB`;
+  } catch (e) {
+    selectedFw = null;
+    selectedFwName = '—';
+    const msg = e && e.message ? e.message : String(e);
+    el('fwInfo').textContent = `Error loading file: ${msg}`;
+    el('fwSize').textContent = '—';
+    alert(`Error loading file: ${msg}`);
+  } finally {
+    input.value = '';
+    updateFlashButton();
+  }
 });
 
 // Intel HEX → BIN
